@@ -1,0 +1,40 @@
+{
+  "name": "pi-copilot-auto",
+  "version": "0.1.0",
+  "description": "GitHub Copilot Auto model support for the pi coding agent",
+  "type": "module",
+  "license": "MIT",
+  "author": "fireworkofsummer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fireworkofsummer/pi-copilot-auto.git"
+  },
+  "homepage": "https://github.com/fireworkofsummer/pi-copilot-auto#readme",
+  "bugs": {
+    "url": "https://github.com/fireworkofsummer/pi-copilot-auto/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "github-copilot",
+    "copilot",
+    "auto-model"
+  ],
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
