@@ -8,7 +8,8 @@ Copilot 的 Auto 并不是可以直接发送到聊天 API 的普通模型 ID。�
 2. 将本轮文本提示发送给 Copilot 的模型路由器；
 3. 选择路由结果中的实际模型；
 4. 携带 `Copilot-Session-Token` 调用该模型；
-5. 在同一个 pi 会话中保持所选模型，Auto 会话过期后自动刷新。
+5. 根据实际模型动态同步 `contextWindow` 和 `maxTokens`；
+6. 在同一个 pi 会话中保持所选模型，Auto 会话过期后自动刷新。
 
 ## 要求
 
@@ -72,6 +73,30 @@ pi --list-models auto
 
 登录成功且扩展已加载时，应看到 `github-copilot/auto`。
 
+## 动态上下文与自动压缩
+
+首次 Auto 路由完成后，扩展会把 `github-copilot/auto` 的上下文窗口和最大输出长度同步为实际模型的值。pi 的上下文百分比、阈值压缩和上下文溢出恢复会据此工作。
+
+首次路由发生前仍使用保守的 128K 上下文窗口。自动压缩在 pi 中默认开启；如果曾经关闭过，请在 `~/.pi/agent/settings.json` 中启用：
+
+```json
+{
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
+}
+```
+
+触发条件为：
+
+```text
+contextTokens > contextWindow - reserveTokens
+```
+
+为了让 pi 将实际模型的溢出错误识别为当前 Auto 模型的错误，扩展会把会话中的响应模型标记为 `github-copilot/auto`，但请求仍由路由选出的实际模型处理。
+
 ## 隐私与计费说明
 
 - 为实现官方 Auto 路由，扩展会把当前会话首次待处理的文本提示发送到 GitHub Copilot 的 `/models/session/intent` 接口；之后正常请求仍发送给 GitHub Copilot。
@@ -81,7 +106,7 @@ pi --list-models auto
 
 ## 工作方式与限制
 
-- Auto 在 pi 的模型列表中是一个伪模型；会话消息中记录的响应模型可能显示为实际被路由到的模型，这是预期行为。
+- Auto 在 pi 的模型列表中是一个伪模型；会话消息将模型记录为 `auto`，以兼容 pi 的自动压缩和溢出恢复。
 - 为避免在工具调用循环中反复改变模型，扩展和官方客户端一样，在一个会话中优先保持首次路由结果。
 - Auto 模型自身不暴露 pi 的 thinking level 选择器；实际模型会采用其支持的默认推理级别。
-- 扩展对 Auto 使用保守的 128K 上下文声明，以免在路由前高估未知候选模型的上下文窗口。
+- 首次路由前使用保守的 128K 上下文声明；路由完成后自动切换为实际模型的限制。

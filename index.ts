@@ -2,6 +2,7 @@ import {
 	createAssistantMessageEventStream,
 	type Api,
 	type AssistantMessage,
+	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	type Context,
 	type Credential,
@@ -44,6 +45,11 @@ type StreamDelegate = (
 	context: Context,
 	options?: AutoStreamOptions,
 ) => AssistantMessageEventStream;
+
+export interface CopilotAutoProviderOptions {
+	/** Only primary agent requests should update the active Auto model's context limits. */
+	isPrimarySession?: (requestSessionId: string | undefined) => boolean;
+}
 
 function createAutoModel(baseUrl: string): Model<Api> {
 	return {
@@ -173,6 +179,16 @@ function createErrorMessage(model: Model<Api>, reason: "error" | "aborted", erro
 	};
 }
 
+function markEventAsAuto(event: AssistantMessageEvent): void {
+	if ("partial" in event) {
+		event.partial.model = AUTO_MODEL_ID;
+	} else if (event.type === "done") {
+		event.message.model = AUTO_MODEL_ID;
+	} else {
+		event.error.model = AUTO_MODEL_ID;
+	}
+}
+
 async function loadGitHubCopilotProvider(): Promise<Provider<Api>> {
 	// pi's extension loader aliases the pi-ai root to its compatibility entrypoint.
 	// Resolve that public entrypoint first, then load the provider module beside it;
@@ -185,7 +201,9 @@ async function loadGitHubCopilotProvider(): Promise<Provider<Api>> {
 	return providerModule.githubCopilotProvider();
 }
 
-export async function createCopilotAutoProvider(): Promise<Provider<Api>> {
+export async function createCopilotAutoProvider(
+	providerOptions: CopilotAutoProviderOptions = {},
+): Promise<Provider<Api>> {
 	const baseProvider = await loadGitHubCopilotProvider();
 	const builtInAuto = baseProvider.getModels().find((model) => model.id === AUTO_MODEL_ID);
 	if (builtInAuto) return baseProvider;
@@ -320,6 +338,17 @@ export async function createCopilotAutoProvider(): Promise<Provider<Api>> {
 		}
 		state.selectedModelId = selectedModelId;
 
+		// Pi checks compaction after the response using the active model object. Keep
+		// the Auto pseudo-model in sync with the model selected for the main agent
+		// session. Compaction summaries use fresh session IDs and must not overwrite
+		// the primary conversation's limits.
+		if (providerOptions.isPrimarySession?.(options?.sessionId) ?? true) {
+			autoModel.contextWindow = selectedModel.contextWindow;
+			autoModel.maxTokens = selectedModel.maxTokens;
+			model.contextWindow = selectedModel.contextWindow;
+			model.maxTokens = selectedModel.maxTokens;
+		}
+
 		return {
 			model: { ...selectedModel, baseUrl: model.baseUrl },
 			sessionToken: autoSession.session_token,
@@ -341,7 +370,12 @@ export async function createCopilotAutoProvider(): Promise<Provider<Api>> {
 					headers: mergeHeaders(options?.headers, { "Copilot-Session-Token": selected.sessionToken }),
 				};
 				const inner = delegate(selected.model, context, delegatedOptions);
-				for await (const event of inner) output.push(event);
+				for await (const event of inner) {
+					// Keep the persisted model identity aligned with Pi's active `auto`
+					// model so overflow recovery is not skipped as a cross-model error.
+					markEventAsAuto(event);
+					output.push(event);
+				}
 				output.end();
 			} catch (error) {
 				const reason = options?.signal?.aborted ? "aborted" : "error";
@@ -379,5 +413,19 @@ export async function createCopilotAutoProvider(): Promise<Provider<Api>> {
 }
 
 export default async function copilotAutoExtension(pi: ExtensionAPI): Promise<void> {
-	pi.registerProvider(await createCopilotAutoProvider());
+	let activeSessionId: string | undefined;
+
+	pi.on("session_start", (_event, ctx) => {
+		activeSessionId = ctx.sessionManager.getSessionId();
+	});
+	pi.on("session_shutdown", () => {
+		activeSessionId = undefined;
+	});
+
+	pi.registerProvider(
+		await createCopilotAutoProvider({
+			isPrimarySession: (requestSessionId) =>
+				activeSessionId === undefined || requestSessionId === activeSessionId,
+		}),
+	);
 }
